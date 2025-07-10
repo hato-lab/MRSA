@@ -1,0 +1,136 @@
+---
+title: "MRSA"
+output: html_document
+date: "..."
+---
+
+```{r}
+library(monocle3)
+library(ggplot2)
+library(Seurat)
+library(svglite)
+
+path = '...'
+```
+
+### Import Seurat Objects
+```{r}
+A2 = readRDS(paste0(path,'xxx.RDS'))
+A4 = readRDS(paste0(path,'xxx.RDS'))
+S2 = readRDS(paste0(path,'xxx.RDS'))
+S4 = readRDS(paste0(path,'xxx.RDS'))
+A2[["slice1.2"]] <- NULL
+A4[["slice1.2"]] <- NULL
+S2[["slice1"]] <- NULL
+S4[["slice1"]] <- NULL
+```
+
+### Define function
+```{r}
+library(Matrix)
+
+gene_annotate = function(expression_matrix){
+  # Step 1: Extract gene IDs (row names of the matrix)
+  gene_ids <- rownames(expression_matrix)
+  
+  # Step 2: Create or extract gene short names
+  gene_short_names <- gene_ids
+  
+  # Step 3: Calculate num_cells_expressed
+  num_cells_expressed <- rowSums(expression_matrix > 0)
+  
+  # Step 4: Create the gene annotation matrix
+  gene_annotation <- data.frame(
+    id = gene_ids,
+    gene_short_name = gene_short_names,
+    num_cells_expressed = num_cells_expressed
+  )
+  
+  return(gene_annotation)
+}
+```
+
+### SELECT SAMPLE AND LOAD
+```{r}
+sample = S4
+
+expression_matrix = GetAssayData(sample, assay = "SCT", layer = "counts")
+cell_metadata = as.data.frame(sample@meta.data)
+cell_metadata$MRSA = ifelse(cell_metadata$MRSAlevel > 1, "MRSA-Yes", "MRSA-No")
+gene_annotation = gene_annotate(expression_matrix)
+
+cds_raw <- new_cell_data_set(expression_matrix, cell_metadata = cell_metadata, gene_metadata = gene_annotation)
+```
+
+### Pre-process, reduce dimensionality
+```{r}
+# preprocess
+cds <- preprocess_cds(cds_raw, num_dim = 50)
+plot_pc_variance_explained(cds)
+
+# batch effect correction
+# cds <- align_cds(cds, alignment_group = "batch", residual_model_formula_str = "~ bg.300.loading + bg.400.loading + bg.500.1.loading + bg.500.2.loading + bg.r17.loading + bg.b01.loading + bg.b02.loading")
+
+# reduce dim
+cds <- reduce_dimension(cds)
+```
+
+### Visualize
+```{r}
+# visualize
+plot_cells(cds, label_groups_by_cluster=FALSE,  color_cells_by = "MRSA")
+plot_cells(cds, label_groups_by_cluster=FALSE,  color_cells_by = "labels")
+```
+
+### Cluster
+```{r}
+cds <- cluster_cells(cds)
+plot_cells(cds, color_cells_by = "partition")
+```
+
+### Learn trajectory graph
+```{r}
+cds <- learn_graph(cds)
+p1 = plot_cells(cds,
+           color_cells_by = "labels",
+           label_groups_by_cluster=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE)
+
+p1
+
+# ggsave("S2 trajectory.svg", plot = p, width = 8, height = 6)
+```
+
+
+# Choose root nodes and plot
+# RUN CODE ONLY FOR SELECTED SAMPLE (S2,S4,A2,A4)!
+
+
+```{r}
+library(patchwork)
+cds <- order_cells(cds)
+
+p2 = plot_cells(cds,
+           color_cells_by = "pseudotime",
+           label_cell_groups=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=1.5)
+
+sample$pseudotime = cds@principal_graph_aux@listData[["UMAP"]][["pseudotime"]]
+sample$pseudotime[is.infinite(sample$pseudotime)] <- 0
+sample$pseudotime <- as.numeric(sample$pseudotime)
+
+p3 = SpatialDimPlot(sample, group.by = 'MRSAlevel', interactive = FALSE)
+p4 = SpatialFeaturePlot(sample, 'pseudotime', interactive = FALSE)
+
+combined_plot <- (p1 | p2) / (p3 | p4) +
+  plot_annotation(
+    title = 'xxx',
+    theme = theme(plot.title = element_text(size = 30))
+  )
+
+ggsave("xxx.svg", combined_plot, width = 15, height = 15, dpi = 300)
+```
+
